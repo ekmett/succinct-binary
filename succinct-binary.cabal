@@ -1,0 +1,40 @@
+name:          succinct-binary
+category:      Data
+version:       0
+license:       BSD2
+cabal-version: >= 1.8
+license-file:  LICENSE
+author:        Edward A. Kmett
+maintainer:    Edward A. Kmett <ekmett@gmail.com>
+stability:     provisional
+homepage:      http://github.com/ekmett/succinct-binary/
+bug-reports:   http://github.com/ekmett/succinct-binary/issues
+copyright:     Copyright (C) 2018 Edward A. Kmett
+synopsis:      Lazy binary (de)serialization
+description:   Lazy binary (de)serialization.
+build-type:    Simple
+extra-source-files:
+
+source-repository head
+  type: git
+  location: git://github.com/ekmett/succinct-binary.git
+
+library
+  build-depends:
+    base >= 4   && < 5,
+    bits,
+    bytes,
+    bytestring,
+    cereal,
+    hw-rankselect,
+    hw-balancedparens,
+    spool,
+    vector
+
+  hs-source-dirs:  src
+  exposed-modules:
+    Data.Binary.Succinct.Blob
+    Data.Binary.Succinct.Put
+    Data.Binary.Succinct.Orphans
+
+  ghc-options: -Wall

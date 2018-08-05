@@ -1,0 +1,7 @@
+packages: ., nih/*
+
+package coda-lsp
+  optimization: False
+
+package coda-set
+  optimization: True

@@ -14,6 +14,9 @@ synopsis:      Lazy binary (de)serialization
 description:   Lazy binary (de)serialization.
 build-type:    Simple
 extra-source-files:
+  .gitignore
+  README.md
+  CHANGELOG.md
 
 source-repository head
   type: git
@@ -34,7 +37,7 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Data.Binary.Succinct.Blob
-    Data.Binary.Succinct.Put
     Data.Binary.Succinct.Orphans
+    Data.Binary.Succinct.Put
 
   ghc-options: -Wall

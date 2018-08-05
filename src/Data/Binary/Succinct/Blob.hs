@@ -22,26 +22,27 @@ import Data.Binary.Succinct.Orphans ()
 data Blob = Blob
   { blobMeta :: CsPoppy
   , blobShape :: RangeMinMax (Storable.Vector Word64)
-  , blobContent :: Storable.Vector Word64
+  , blobContent :: Strict.ByteString
   } deriving Show
 
 runPutM :: PutM a -> (a, Blob)
 runPutM ma = case unPutM ma' (S 0 0 0 0) of
     Result a _ (W m s c) -> (a, Blob 
-      { blobMeta = makeCsPoppy $ nice m
-      , blobShape = mkRangeMinMax $ nice s
-      , blobContent = nice c
+      { blobMeta = makeCsPoppy $ ws m
+      , blobShape = mkRangeMinMax $ ws s
+      , blobContent = bs c
       })
   where
     pad = replicateM_ 7 $ putWord8 0
     flush8 = Bits.putAligned pad
-    trim8 bs = Strict.take (Strict.length bs .&. complement 7) bs
-    nice = byteStringToVector . trim8 . Lazy.toStrict . Builder.toLazyByteString
+    trim8 b = Strict.take (Strict.length b .&. complement 7) b
+    bs = Lazy.toStrict . Builder.toLazyByteString
+    ws = byteStringToVector . trim8 . bs
     ma' = do
       result <- ma
       meta flush8
       shape flush8
-      content pad
+      -- content pad
       return result
   
 runPut :: Put -> Blob

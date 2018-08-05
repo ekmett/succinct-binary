@@ -30,6 +30,7 @@ library
     bytestring,
     cereal,
     hw-rankselect,
+    hw-rankselect-base,
     hw-balancedparens,
     spool,
     vector
@@ -39,5 +40,6 @@ library
     Data.Binary.Succinct.Blob
     Data.Binary.Succinct.Orphans
     Data.Binary.Succinct.Put
+    Data.Binary.Succinct.Get
 
   ghc-options: -Wall

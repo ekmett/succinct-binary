@@ -38,8 +38,9 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Data.Binary.Succinct.Blob
+    Data.Binary.Succinct.Get
     Data.Binary.Succinct.Orphans
     Data.Binary.Succinct.Put
-    Data.Binary.Succinct.Get
+    Data.Binary.Succinct
 
   ghc-options: -Wall

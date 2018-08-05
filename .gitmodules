@@ -1,0 +1,3 @@
+[submodule "nih/cereal"]
+	path = nih/cereal
+	url = git@github.com:ekmett/cereal

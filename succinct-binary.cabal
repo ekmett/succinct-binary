@@ -29,6 +29,7 @@ library
     bytes,
     bytestring,
     cereal,
+    contravariant,
     hw-rankselect,
     hw-rankselect-base,
     hw-balancedparens,
@@ -41,6 +42,5 @@ library
     Data.Binary.Succinct.Get
     Data.Binary.Succinct.Orphans
     Data.Binary.Succinct.Put
-    Data.Binary.Succinct
 
   ghc-options: -Wall

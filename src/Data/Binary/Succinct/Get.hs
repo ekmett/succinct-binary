@@ -13,9 +13,8 @@ import Data.Vector.Storable as Storable
 import Data.Word
 import HaskellWorks.Data.BalancedParens.RangeMinMax as BP
 import HaskellWorks.Data.BalancedParens.BalancedParens as BP
-import HaskellWorks.Data.RankSelect.Base.Rank0
+import HaskellWorks.Data.RankSelect.Base.Rank1
 import HaskellWorks.Data.RankSelect.Base.Select1
-import HaskellWorks.Data.RankSelect.CsPoppy as CsPoppy
 
 newtype Get a = Get { unGet :: Blob -> Word64 -> a }
   deriving Functor
@@ -25,18 +24,19 @@ instance Applicative Get where
   (<*>) = ap
 
 instance Monad Get where
-  Get m >>= k = Get $ \e s -> unGet (k (m e s)) e s
+  m >>= k = Get $ \e s -> unGet (k (unGet m e s)) e s
 
 shapely
   :: (RangeMinMax (Storable.Vector Word64) -> Word64 -> Maybe Word64)
   -> Blob
   -> Word64
   -> Word64
-shapely k (Blob meta shape _)
+shapely k b@(Blob meta shape _) i
   = select1 meta
-  . fromMaybe (error "bad shape")
+  . fromMaybe (error $ "bad shape: " <> show (b,i))
   . k shape
   . rank1 meta
+  $ i
 
 getPair :: Get a -> Get b -> Get (a, b)
 getPair (Get l) (Get r) = Get $ \d i -> let
@@ -46,4 +46,7 @@ getPair (Get l) (Get r) = Get $ \d i -> let
 
 get8 :: Get Word8
 get8 = Get $ \(Blob meta _ content) i ->
-  Strict.index content $ fromIntegral $ rank0 meta i
+  Strict.index content $ fromIntegral $ rank0' meta i
+
+rank0' :: Rank1 v => v -> Word64 -> Word64 
+rank0' s i = i - rank1 s i

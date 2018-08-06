@@ -1,4 +1,10 @@
 {-# language DeriveFunctor #-}
+{-# language LambdaCase #-}
+{-# language UndecidableInstances #-}
+{-# language DefaultSignatures #-}
+{-# language FlexibleContexts #-}
+{-# language EmptyCase #-}
+{-# language TypeOperators #-}
 {-# options_ghc -funbox-strict-fields #-}
 module Data.Binary.Succinct.Put {- .Internal -}
   ( Put, PutM(..)
@@ -10,6 +16,10 @@ module Data.Binary.Succinct.Put {- .Internal -}
   , putParens
   , putPair
   , put8
+  , Puttable(..)
+  , GPuttable(..)
+  , Puttable1(..)
+  , GPuttable1(..)
   ) where
 
 import Control.Monad (ap)
@@ -19,6 +29,7 @@ import Data.Bytes.Put
 import Data.ByteString.Builder
 import qualified Data.Serialize.Put as Cereal
 import Data.Word
+import qualified GHC.Generics as G
 
 putLSB :: MonadPut m => Bool -> Coding m ()
 putLSB v = Coding $ \k i b ->
@@ -102,3 +113,74 @@ putPair l r (a,b) = putParens (putParens (l a) *> putParens (r b))
 
 put8 :: Word8 -> Put
 put8 w = meta (putLSB False) *> content (putWord8 w)
+
+class Puttable a where
+  put :: a -> Put
+  default put :: (G.Generic a, GPuttable (G.Rep a)) => a -> Put
+  put = gput . G.from
+
+instance Puttable ()
+
+instance Puttable Word8 where
+  put = put8
+
+class GPuttable t where
+  gput :: t a -> Put
+
+instance GPuttable G.U1 where
+  gput _ = pure ()
+
+instance GPuttable G.V1 where
+  gput = \case
+
+instance Puttable c => GPuttable (G.K1 i c) where
+  gput = put . G.unK1
+
+instance GPuttable f => GPuttable (G.M1 i c f) where
+  gput = gput . G.unM1
+
+instance (GPuttable f, GPuttable g) => GPuttable (f G.:*: g) where
+  gput (a G.:*: b) = putParens $ putParens (gput a) *> putParens (gput b)
+
+instance (GPuttable f, GPuttable g) => GPuttable (f G.:+: g) where
+  gput (G.L1 a) = put8 0 *> gput a
+  gput (G.R1 b) = put8 1 *> gput b
+
+instance (Puttable1 f, GPuttable g) => GPuttable (f G.:.: g) where
+  gput = put1 gput . G.unComp1
+
+class Puttable1 f where
+  put1 :: (a -> Put) -> f a -> Put
+  default put1 :: (G.Generic1 f, GPuttable1 (G.Rep1 f)) => (a -> Put) -> f a -> Put
+  put1 f = gput1 f . G.from1
+
+class GPuttable1 f where 
+  gput1 :: (a -> Put) -> f a -> Put
+
+instance GPuttable1 G.U1 where
+  gput1 _ _ = pure ()
+
+instance GPuttable1 G.V1 where
+  gput1 _ = \case
+
+instance (GPuttable1 f, GPuttable1 g) => GPuttable1 (f G.:*: g) where
+  gput1 f (a G.:*: b) = putParens $ putParens (gput1 f a) *> putParens (gput1 f b)
+
+instance (GPuttable1 f, GPuttable1 g) => GPuttable1 (f G.:+: g) where
+  gput1 f (G.L1 a) = put8 0 *> gput1 f a
+  gput1 f (G.R1 b) = put8 1 *> gput1 f b
+
+instance (Puttable1 f, GPuttable1 g) => GPuttable1 (f G.:.: g) where
+  gput1 f = put1 (gput1 f) . G.unComp1
+
+instance Puttable c => GPuttable1 (G.K1 i c) where
+  gput1 _ = put . G.unK1
+
+instance GPuttable1 f => GPuttable1 (G.M1 i c f) where
+  gput1 f = gput1 f . G.unM1
+
+instance Puttable1 f => GPuttable1 (G.Rec1 f) where
+  gput1 f = put1 f . G.unRec1
+
+instance GPuttable1 G.Par1 where
+  gput1 f = f . G.unPar1

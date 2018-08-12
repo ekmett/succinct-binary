@@ -1,6 +1,0 @@
-[submodule "nih/cereal"]
-	path = nih/cereal
-	url = git@github.com:ekmett/cereal
-[submodule "nih/hw-rankselect"]
-	path = nih/hw-rankselect
-	url = git@github.com:ekmett/hw-rankselect.git

@@ -10,7 +10,6 @@
 {-# language TypeOperators #-}
 module Data.Binary.Succinct.Get 
   ( Get(..)
-  , getPair
   , get8
   , Gettable(..)
   , liftGet
@@ -28,6 +27,7 @@ import Data.Proxy
 import qualified Data.Serialize.Get as S
 import Data.Vector.Storable as Storable
 import Data.Word
+import Debug.Trace
 import GHC.Generics as G
 import qualified Generics.SOP as SOP
 import qualified Generics.SOP.GGP as SOP
@@ -64,15 +64,10 @@ move :: (RangeMinMax (Storable.Vector Word64) -> Word64 -> Maybe Word64)
   -> Get a -> Get a
 move f m = Get $ \d i -> runGet m d (shapely f d i)
 
-getPair :: Get a -> Get b -> Get (a, b)
-getPair (Get l) (Get r) = Get $ \d i -> let
-    j = shapely firstChild d i
-    k = shapely nextSibling d j
-  in (l d j, r d k)
-
 get8 :: Get Word8
 get8 = Get $ \(Blob meta _ content) i ->
-  Strict.index content $ fromIntegral $ rank0 meta i
+  let result = Strict.index content $ fromIntegral $ rank0 meta i in
+  traceShow ("get8",i,result) result
 
 liftGet :: S.Get a -> Get a
 liftGet g = Get $ \(Blob meta _ content) i ->
@@ -97,21 +92,22 @@ gget = case SOP.shape :: SOP.Shape (SOP.GCode a) of
                               <$> move firstChild (products SOP.shape)
     n -> do
       k <- get8
-      SOP.gto . SOP.SOP <$> sums k n
+      traceShow ("read tag",k) $ SOP.gto . SOP.SOP <$> sums k n
   where
     sums :: SOP.All2 Gettable xss
          => Word8
          -> SOP.Shape xss
          -> Get (SOP.NS (SOP.NP SOP.I) xss)
+    -- do we need to add a case for where the firstChild doesn't have any content
+    -- when the Shape of the products is empty
+
     sums 0 (SOP.ShapeCons _) = SOP.Z <$> move firstChild (products SOP.shape)
     sums k (SOP.ShapeCons xs) = SOP.S <$> sums (k-1) xs
     sums _ SOP.ShapeNil = error "bad tag"
 
     products :: SOP.All Gettable xs => SOP.Shape xs -> Get (SOP.NP SOP.I xs)
     products SOP.ShapeNil = return SOP.Nil
-    products (SOP.ShapeCons SOP.ShapeNil) = do
-      a <- get
-      return $ SOP.I a SOP.:* SOP.Nil
+    products (SOP.ShapeCons SOP.ShapeNil) = fmap (\a -> SOP.I a SOP.:* SOP.Nil) get
     products (SOP.ShapeCons xs) = do
       a <- get
       as <- move nextSibling (products xs)

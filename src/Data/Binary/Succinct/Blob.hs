@@ -1,6 +1,7 @@
 module Data.Binary.Succinct.Blob
   ( Blob(..)
   , runPut
+  , blob
   ) where
 
 import Control.Monad (replicateM_)
@@ -20,8 +21,8 @@ import Data.Binary.Succinct.Put
 import Data.Binary.Succinct.Orphans ()
 
 data Blob = Blob
-  { blobMeta :: CsPoppy
-  , blobShape :: RangeMinMax (Storable.Vector Word64)
+  { blobMeta    :: CsPoppy
+  , blobShape   :: RangeMinMax (Storable.Vector Word64)
   , blobContent :: Strict.ByteString
   } deriving Show
 
@@ -47,3 +48,21 @@ runPutM ma = case unPutM ma' (S 0 0 0 0) of
   
 runPut :: Put -> Blob
 runPut = snd . runPutM
+
+rank1_ :: Rank1 v => v -> Word64 -> Word64
+rank1_ s i
+  | i <= 0 = 0
+  | otherwise = rank1 s i
+
+access :: Rank1 v => v -> Word64 -> Bool
+access s i = toEnum $ fromIntegral $ rank1_ s i - rank1_ s (i - 1)
+
+-- currently segfaults
+blob :: Blob -> String
+blob (Blob m s _c) = do
+  i <- [0..fromIntegral $ Storable.length (csPoppyBits m)*64-1]
+  case access m i of
+    True -> case access s (rank1_ m i) of
+      False -> "("
+      True -> ")"
+    False -> "D" -- data

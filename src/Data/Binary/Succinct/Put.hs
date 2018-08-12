@@ -14,7 +14,6 @@ module Data.Binary.Succinct.Put {- .Internal -}
   , W(..)
   , Result(..)
   , putParens
-  , putPair
   , put8
   , Puttable(..)
   , putN
@@ -116,9 +115,6 @@ putParen p = do
 
 putParens :: Put -> Put
 putParens p = putParen False *> p <* putParen True
-
-putPair :: (a -> Put) -> (b -> Put) -> (a, b) -> Put
-putPair l r (a,b) = putParens (putParens (l a) *> putParens (r b))
 
 put8 :: Word8 -> Put
 put8 w = meta (putLSB False) *> content (putWord8 w)

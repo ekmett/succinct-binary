@@ -114,7 +114,7 @@ putParen p = do
   shape $ putLSB p
 
 putParens :: Put -> Put
-putParens p = putParen False *> p <* putParen True
+putParens p = putParen True *> p <* putParen False
 
 put8 :: Word8 -> Put
 put8 w = meta (putLSB False) *> content (putWord8 w)

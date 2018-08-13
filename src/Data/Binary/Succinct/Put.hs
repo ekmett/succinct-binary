@@ -88,7 +88,7 @@ meta m = PutM $ \(S o1 d1 o2 d2) -> case S.runPutMBuilder (runCoding m go o1 d1)
 
 shape :: Coding S.PutM a -> PutM a
 shape m = PutM $ \(S o1 d1 o2 d2) -> case S.runPutMBuilder (runCoding m go o2 d2) of
-  ((a, o2', d2'), b) -> Result a (S o1 d1 o2' d2') (W b mempty mempty)
+  ((a, o2', d2'), b) -> Result a (S o1 d1 o2' d2') (W mempty b mempty)
   where
     go :: a -> Int -> Word8 -> S.PutM (a, Int, Word8)
     go a o2' d2' = pure (a, o2', d2')

@@ -32,7 +32,7 @@ data Blob = Blob
 runPutM :: PutM a -> (a, Blob)
 runPutM ma = case unPutM ma (S 0 0 0 0) of
     Result a (S i b j b') (W m s c n) -> (a, Blob 
-      { blobSize = fromIntegral n
+      { blobSize = n
       , blobMeta = makeCsPoppy $ ws $ flush8 i b m
       , blobShape = mkRangeMinMax $ ws $ flush8 j b' s
       , blobContent = bs c

@@ -3,6 +3,9 @@
 {-# language FlexibleContexts #-}
 {-# language BangPatterns #-}
 {-# language EmptyCase #-}
+{-# language AllowAmbiguousTypes #-}
+{-# language TypeApplications #-}
+{-# language ScopedTypeVariables #-}
 {-# language GADTs #-}
 {-# language TypeOperators #-}
 {-# options_ghc -funbox-strict-fields #-}
@@ -23,10 +26,9 @@ module Data.Binary.Succinct.Put {- .Internal -}
 
 import Control.Monad (ap, replicateM_)
 import Data.Bits
-import Data.Bits.Coding
-import Data.Bytes.Put
 import Data.ByteString as Strict
-import Data.ByteString.Builder
+import Data.ByteString.Builder as Builder
+import Data.ByteString.UTF8 as UTF8
 import Data.Int
 import Data.Proxy
 import qualified Data.Serialize.Put as S
@@ -39,25 +41,16 @@ import Data.Functor.Sum as F
 import qualified Generics.SOP as SOP
 import qualified Generics.SOP.GGP as SOP
 
-putLSB :: MonadPut m => Bool -> Coding m ()
-putLSB v = Coding $ \k i b ->
-  if i == 7
-  then do
-    putWord8 (pushBit b i v)
-    k () 0 0
-  else (k () $! i + 1) $! pushBit b i v
-  where
-    pushBit w i False = clearBit w i
-    pushBit w i True  = setBit   w i
+import Data.Binary.Succinct.Size
 
 data S = S !Int !Word8 !Int !Word8
-data W = W !Builder !Builder !Builder
+data W = W !Builder !Builder !Builder !Word64
 
 instance Semigroup W where
-  W a b c <> W d e f = W (a <> d) (b <> e) (c <> f)
+  W a b c n <> W d e f m = W (a <> d) (b <> e) (c <> f) (n + m)
 
 instance Monoid W where
-  mempty = W mempty mempty mempty
+  mempty = W mempty mempty mempty 0
   mappend = (<>)
 
 data Result a = Result a {-# UNPACK #-} !S {-# UNPACK #-} !W
@@ -77,84 +70,105 @@ instance Monad PutM where
     Result a s' w -> case unPutM (f a) s' of
       Result b s'' w' -> Result b s'' (w <> w')
 
--- your job is to properly deal with managing meta, shape and content coherently
+meta :: Bool -> PutM ()
+meta v = PutM $ \(S i b j c) -> 
+  if i == 7
+  then Result () (S 0 0 j c) (W (Builder.word8 (pushBit b i v)) mempty mempty 1)
+  else Result () (S (i+1) (pushBit b i v) j c) mempty
 
-meta :: Coding S.PutM a -> PutM a
-meta m = PutM $ \(S o1 d1 o2 d2) -> case S.runPutMBuilder (runCoding m go o1 d1) of
-  ((a,o1',d1'), builder) -> Result a (S o1' d1' o2 d2) (W builder mempty mempty)
-  where
-    go :: a -> Int -> Word8 -> S.PutM (a, Int, Word8)
-    go a o1' d1' = pure (a, o1', d1')
+shape :: Bool -> PutM ()
+shape v = PutM $ \(S j c i b) -> 
+  if i == 7
+  then Result () (S j c 0 0 ) (W mempty (Builder.word8 (pushBit b i v)) mempty 0)
+  else Result () (S j c (i+1) (pushBit b i v)) mempty
 
-shape :: Coding S.PutM a -> PutM a
-shape m = PutM $ \(S o1 d1 o2 d2) -> case S.runPutMBuilder (runCoding m go o2 d2) of
-  ((a, o2', d2'), b) -> Result a (S o1 d1 o2' d2') (W mempty b mempty)
-  where
-    go :: a -> Int -> Word8 -> S.PutM (a, Int, Word8)
-    go a o2' d2' = pure (a, o2', d2')
+pushBit :: Word8 -> Int -> Bool -> Word8
+pushBit w i False = clearBit w i
+pushBit w i True  = setBit   w i
 
 -- should this log how much is put and just automatically scribble into shape?
 -- PutM doesn't give us enough info to do that efficiently.
 content :: S.PutM a -> PutM a
 content m = PutM $ \s -> case S.runPutMBuilder m of
-  (a, b) -> Result a s (W mempty mempty b)
+  (a, b) -> Result a s (W mempty mempty b 0)
 
-{-
-  meta
-  11110000110000111100000011 poppy, compact, not succinct
-     /                     \
-     content              shape
-  #1 #2 #2 'h' 'i'    (((()()))())
-                      000010111011
--}
+--  meta
+--  11110000110000111100000011 poppy, compact, not succinct
+--     /                     \
+--     content              shape
+--  #1 #2 #2 'h' 'i'    (((()()))())
+--                      000010111011
 
 putParen :: Bool -> Put
 putParen p = do
-  meta $ putLSB True
-  shape $ putLSB p
+  meta True
+  shape p
 
 putParens :: Put -> Put
 putParens p = putParen True *> p <* putParen False
 
+putBS :: ByteString -> Put
+putBS bs = putN (Strict.length bs) (S.putByteString bs)
+
 put8 :: Word8 -> Put
-put8 w = meta (putLSB False) *> content (putWord8 w)
+put8 w = meta False *> content (S.putWord8 w)
 
 putN :: Int -> S.Put -> Put
--- TODO: replace that replicateM_ !!!
-putN i w = meta (replicateM_ i $ putLSB False) *> content w
+putN i w = replicateM_ i (meta False) *> content w -- TODO: more efficient bulk meta
 
 putN_ :: S.Put -> Put
--- TODO: replace that replicateM_ !!!
-putN_ w = meta (replicateM_ n $ putLSB False) *> content (S.putByteString bs)
-  where
-    bs = S.runPut w
-    n = Strict.length bs
+putN_ w = replicateM_ n (meta False) *> content (S.putByteString bs) where
+  bs = S.runPut w
+  n = Strict.length bs
 
 --------------------------------------------------------------------------------
 -- * Puttable
 --------------------------------------------------------------------------------
 
-class Puttable a where
+class Sized a => Puttable a where
   put :: a -> Put
   default put :: (G.Generic a, SOP.GFrom a, SOP.All2 Puttable (SOP.GCode a)) => a -> Put
   put = gput
 
+{-
+(((a,b),c),d) -- (((a)b)c)d
+((a,b),(c,d)) -- ((a)b)(c)d
+(a,(b,(c,d))) -- (a)(b)(c)d
+
+-- with b and c of known size:
+(((a,b),c),d) -- (((a)b)c)d
+((a,b),(c,d)) -- ((a)b)cd
+(a,(b,(c,d))) -- (a)bcd
+-}
+
 gput :: (G.Generic a, SOP.GFrom a, SOP.All2 Puttable (SOP.GCode a)) => a -> Put
 gput xs0 = case SOP.lengthSList sop of
     1 -> case sop of
-      SOP.SOP (SOP.Z xs) -> putParens (products xs)
+      SOP.Z xs -> products xs -- skip the data constructor when we have only one constructor
       _ -> error "the impossible happened"
     _ -> sums 0 sop
   where
-    sop = SOP.gfrom xs0
+    SOP.SOP sop = SOP.gfrom xs0
 
-    sums :: SOP.All2 Puttable xss => Word8 -> SOP.SOP SOP.I xss -> Put
-    sums !acc (SOP.SOP (SOP.Z xs)) = putParens (put8 acc *> products xs)
-    sums acc (SOP.SOP (SOP.S xss)) = sums (acc + 1) (SOP.SOP xss)
+    sums :: SOP.All2 Puttable xss => Word8 -> SOP.NS (SOP.NP SOP.I) xss -> Put
+    sums !acc (SOP.Z xs) = put8 acc *> products xs
+    sums acc (SOP.S xss) = sums (acc + 1) xss
 
     products :: SOP.All Puttable xs => SOP.NP SOP.I xs -> Put
     products SOP.Nil = pure ()
-    products (SOP.I x SOP.:* xs) = putParens (put x) *> products xs
+    products (SOP.I x SOP.:* xs) = products1 x xs
+    
+    products1 :: (Puttable x, SOP.All Puttable xs) => x -> SOP.NP SOP.I xs -> Put
+    products1 x SOP.Nil = put x -- the last field is written without parens: TODO: the last variable width field
+    products1 x (SOP.I y SOP.:* ys) = putWithParens x *> products1 y ys
+
+putWithParens :: forall a. Puttable a => a -> Put
+putWithParens = case size @a of
+  Variable -> putParens . put
+  _ -> put
+
+-- (String,Int64,String)
+-- ((a)bc)
 
 instance Puttable Word64 where
   put = putN 8 . S.putWord64le
@@ -170,6 +184,9 @@ instance Puttable Word8 where
 
 instance Puttable Int64 where
   put = putN 8 . S.putInt64le
+
+instance Puttable Char where
+  put = putBS . UTF8.fromString . pure
 
 instance Puttable Int32 where
   put = putN 4 . S.putInt32le

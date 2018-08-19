@@ -8,16 +8,23 @@
 {-# language ScopedTypeVariables #-}
 {-# language TypeApplications #-}
 {-# language TypeOperators #-}
+{-# options_ghc -Wno-all #-} -- shut up for now
 module Data.Binary.Succinct.Get 
   ( Get(..)
-  , get8
+{-
   , Gettable(..)
+  -- guts
   , liftGet
+  , get8
+  , rest
+  , focused
+-}
   ) where
 
 import Control.Monad (ap)
 import Data.Binary.Succinct.Blob
 import Data.ByteString as Strict
+import Data.ByteString.UTF8 as UTF8
 import Data.Functor.Compose as F
 import Data.Functor.Product as F
 import Data.Functor.Sum as F
@@ -34,6 +41,7 @@ import qualified Generics.SOP.GGP as SOP
 
 import HaskellWorks.Data.BalancedParens.RangeMinMax as BP
 import HaskellWorks.Data.BalancedParens.BalancedParens as BP
+import HaskellWorks.Data.BalancedParens as BP
 import HaskellWorks.Data.RankSelect.Base.Rank0
 import HaskellWorks.Data.RankSelect.Base.Rank1
 import HaskellWorks.Data.RankSelect.Base.Select1
@@ -41,12 +49,30 @@ import HaskellWorks.Data.RankSelect.Base.Select1
 newtype Get a = Get { runGet :: Blob -> Word64 -> a }
   deriving Functor
 
+-- () -> -- no bytes
+-- (a,b) -> (a)b -- storable optimizations would let us skip the parens if either were fixed sized?
+-- (a,b,c) -> (a)(b)c
+-- Left a -> 0a
+-- Right b -> 1b
+-- Nothing -> 0
+-- Just a -> 1a
+-- [] -> 0
+-- (a:as) -> 1(a)as
+-- ("hello",65) -> (1(h)1(e)1(l)1(l)1(o)0)65
+-- 
+-- (1h1e1l1l1o0)65 with storable optimizations?
+-- 
+-- storable optimizations would let us skip the parens around the child entirely
+-- for things that store as fixed size
+
 instance Applicative Get where
   pure a = Get $ \_ _ -> a
   (<*>) = ap
 
 instance Monad Get where
-  m >>= k = Get $ \e s -> runGet (k (runGet m e s)) e s
+  m >>= k = Get $ \e i -> runGet (k (runGet m e i)) e i
+
+{-
 
 shapely
   :: (RangeMinMax (Storable.Vector Word64) -> Word64 -> Maybe Word64)
@@ -75,18 +101,40 @@ liftGet g = Get $ \(Blob meta _ content) i ->
     Left e -> error e
     Right a -> a
 
+rest :: Get ByteString
+rest = Get $ \(Blob meta _ content) i -> Strict.drop (fromIntegral $ rank0 meta i) content
+
+focused :: Get ByteString
+focused = Get $ \ (Blob meta shape content) i -> let
+    j = rank0 meta i
+    ending = Strict.drop (fromIntegral j) content
+  in case rank0 meta . select1 meta <$> findClose shape (i - j) of
+    Just k -> Strict.take (fromIntegral $ k - j) ending
+    Nothing -> ending
+
 --------------------------------------------------------------------------------
 -- * Gettable
 --------------------------------------------------------------------------------
 
+{-
+  general case:
+  * Store nth data constructor @Foo a b c@ as @(n(a)(b)(c))@
+
+  optimizations:
+  * if there is only one field, this doesn't store the child parens: @Just a -> (1a)@
+  * if there is no field, no child parens at all. @Nothing -> (0)@
+  * if there is only one constructor, don't store the tag: @((a,b)) -> (a(b))@
+
+  furter optimizations possible:
+  * if all parts have known size, no parens at all (including parent parens)
+-}
+
 class Gettable a where
   get :: Get a
-  default get :: (G.Generic a, SOP.GTo a, SOP.All2 Gettable (SOP.GCode a))
-              => Get a
+  default get :: (G.Generic a, SOP.GTo a, SOP.All2 Gettable (SOP.GCode a)) => Get a
   get = gget
 
-gget :: forall a.  (G.Generic a, SOP.GTo a, SOP.All2 Gettable (SOP.GCode a))
-     => Get a
+gget :: forall a.  (G.Generic a, SOP.GTo a, SOP.All2 Gettable (SOP.GCode a)) => Get a
 gget = case SOP.shape :: SOP.Shape (SOP.GCode a) of
     SOP.ShapeCons SOP.ShapeNil -> SOP.gto . SOP.SOP . SOP.Z
                               <$> move firstChild (products SOP.shape)
@@ -114,8 +162,15 @@ gget = case SOP.shape :: SOP.Shape (SOP.GCode a) of
       return $ SOP.I a SOP.:* as
 
 instance Gettable ()
+
 instance Gettable Word8 where
   get = get8
+
+instance Gettable Char where
+  get = tweak <$> focused where
+   tweak bs = case decode bs of
+     Just (c,_) -> c
+     Nothing -> error "bad input"
 
 instance Gettable Word16 where get = liftGet S.getWord16le
 instance Gettable Word32 where get = liftGet S.getWord32le
@@ -124,6 +179,7 @@ instance Gettable Int8 where get = liftGet S.getInt8
 instance Gettable Int16 where get = liftGet S.getInt16le
 instance Gettable Int32 where get = liftGet S.getInt32le
 instance Gettable Int64 where get = liftGet S.getInt64le
+-- TODO: Gettable Integer, Gettable Int?
 
 instance Gettable (Proxy a)
 instance Gettable a => Gettable (Maybe a)
@@ -133,3 +189,5 @@ instance (Gettable a, Gettable b) => Gettable (Either a b)
 instance Gettable (f (g a)) => Gettable (F.Compose f g a)
 instance (Gettable (f a), Gettable (g a)) => Gettable (F.Product f g a)
 instance (Gettable (f a), Gettable (g a)) => Gettable (F.Sum f g a)
+
+-}

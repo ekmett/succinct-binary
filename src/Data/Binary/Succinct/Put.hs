@@ -73,13 +73,13 @@ instance Monad PutM where
 meta :: Bool -> PutM ()
 meta v = PutM $ \(S i b j c) -> 
   if i == 7
-  then Result () (S 0 0 j c) (W (Builder.word8 (pushBit b i v)) mempty mempty 1)
-  else Result () (S (i+1) (pushBit b i v) j c) mempty
+  then Result () (S 0 0 j c) $ W (Builder.word8 (pushBit b i v)) mempty mempty 1
+  else Result () (S (i+1) (pushBit b i v) j c) $ W mempty mempty mempty 1
 
 shape :: Bool -> PutM ()
 shape v = PutM $ \(S j c i b) -> 
   if i == 7
-  then Result () (S j c 0 0 ) (W mempty (Builder.word8 (pushBit b i v)) mempty 0)
+  then Result () (S j c 0 0 ) $ W mempty (Builder.word8 (pushBit b i v)) mempty 0
   else Result () (S j c (i+1) (pushBit b i v)) mempty
 
 pushBit :: Word8 -> Int -> Bool -> Word8

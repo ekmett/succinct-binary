@@ -1,4 +1,4 @@
-packages: .
+packages: ., nih/*
 
 package coda-lsp
   optimization: False

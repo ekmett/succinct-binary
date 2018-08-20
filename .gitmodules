@@ -1,0 +1,3 @@
+[submodule "nih/generics-sop"]
+	path = nih/generics-sop
+	url = https://github.com/Taneb/generics-sop.git

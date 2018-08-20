@@ -32,7 +32,7 @@ import Data.ByteString.UTF8 as UTF8
 import Data.Int
 import Data.Proxy
 import qualified Data.Serialize.Put as S
--- import Data.Void
+import Data.Void
 import Data.Word
 import qualified GHC.Generics as G
 import Data.Functor.Compose as F
@@ -145,6 +145,7 @@ gput :: (G.Generic a, SOP.GFrom a, SOP.All2 Puttable (SOP.GCode a)) => a -> Put
 gput xs0 = case SOP.lengthSList sop of
     1 -> case sop of
       SOP.Z xs -> products xs -- skip the data constructor when we have only one constructor
+                              -- TODO: skip when we only have one _possible_ constructor (skip size=Any constructors)
       _ -> error "the impossible happened"
     _ -> sums 0 sop
   where
@@ -199,6 +200,7 @@ instance Puttable Int8 where
 
 -- instance Puttable Void -- TODO: fix GSumFrom in Generics.SOP to allow V1
 instance Puttable ()
+instance Puttable Void
 instance Puttable (Proxy a)
 instance Puttable a => Puttable (Maybe a)
 instance Puttable a => Puttable [a]

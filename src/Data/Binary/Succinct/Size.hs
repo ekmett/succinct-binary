@@ -18,6 +18,7 @@ import Data.Functor.Compose as F
 import Data.Functor.Product as F
 import Data.Functor.Sum as F
 import Data.Int
+import Data.Void
 import Data.Word
 import Generics.SOP
 import Generics.SOP.NP
@@ -82,6 +83,7 @@ instance (Sized a, Sized b) => Sized (Either a b)
 instance Sized (Proxy a)
 instance Sized Char where size = Variable
 instance Sized ()
+instance Sized Void
 
 instance Sized (f (g a)) => Sized (F.Compose f g a)
 instance (Sized (f a), Sized (g a)) => Sized (F.Product f g a)

@@ -24,8 +24,9 @@ module Data.Binary.Succinct.Put {- .Internal -}
   , gput
   ) where
 
-import Control.Monad (ap, replicateM_)
+import Control.Monad (ap)
 import Data.Bits
+import Data.Semigroup
 import Data.ByteString as Strict
 import Data.ByteString.Builder as Builder
 import Data.ByteString.UTF8 as UTF8
@@ -70,21 +71,33 @@ instance Monad PutM where
     Result a s' w -> case unPutM (f a) s' of
       Result b s'' w' -> Result b s'' (w <> w')
 
+push :: Bool -> Int -> Word8 -> (Builder, Int, Word8)
+push v i b
+  | i == 7    = (Builder.word8 b', 0, 0)
+  | otherwise = (mempty, i + 1, b')
+  where b' = if v then setBit b i else b
+{-# INLINE push #-}
+
 meta :: Bool -> PutM ()
-meta v = PutM $ \(S i b j c) -> 
-  if i == 7
-  then Result () (S 0 0 j c) $ W (Builder.word8 (pushBit b i v)) mempty mempty 1
-  else Result () (S (i+1) (pushBit b i v) j c) $ W mempty mempty mempty 1
+meta v = PutM $ \(S i b j c) -> case push v i b of
+  (m,i',b') -> Result () (S i' b' j c) $ W m mempty mempty 1
 
 shape :: Bool -> PutM ()
-shape v = PutM $ \(S j c i b) -> 
-  if i == 7
-  then Result () (S j c 0 0 ) $ W mempty (Builder.word8 (pushBit b i v)) mempty 0
-  else Result () (S j c (i+1) (pushBit b i v)) mempty
+shape v = PutM $ \(S i b j c) -> case push v j c of
+  (s,j',c') -> case push True i b of
+    (m, i', b') -> Result () (S i' b' j' c') $ W m s mempty 1
 
-pushBit :: Word8 -> Int -> Bool -> Word8
-pushBit w i False = clearBit w i
-pushBit w i True  = setBit   w i
+-- push a run of 0s into the meta buffer
+metas :: Int -> PutM ()
+metas k
+  | k <= 0 = pure ()
+  | otherwise = PutM $ \(S i b j c) -> case divMod (i + k) 8 of
+    (0,r) -> Result () (S r b j c) $ W mempty mempty mempty (fromIntegral k)
+    (q,r) -> Result () (S r 0 j c) $
+      W (Builder.word8 b <> stimesMonoid (q-1) (Builder.word8 0))
+        mempty
+        mempty
+        (fromIntegral k)
 
 -- should this log how much is put and just automatically scribble into shape?
 -- PutM doesn't give us enough info to do that efficiently.
@@ -99,13 +112,8 @@ content m = PutM $ \s -> case S.runPutMBuilder m of
 --  #1 #2 #2 'h' 'i'    (((()()))())
 --                      000010111011
 
-putParen :: Bool -> Put
-putParen p = do
-  meta True
-  shape p
-
 putParens :: Put -> Put
-putParens p = putParen True *> p <* putParen False
+putParens p = shape True *> p <* shape False
 
 putBS :: ByteString -> Put
 putBS bs = putN (Strict.length bs) (S.putByteString bs)
@@ -114,12 +122,11 @@ put8 :: Word8 -> Put
 put8 w = meta False *> content (S.putWord8 w)
 
 putN :: Int -> S.Put -> Put
-putN i w = replicateM_ i (meta False) *> content w -- TODO: more efficient bulk meta
+putN i w = metas i *> content w
 
 putN_ :: S.Put -> Put
-putN_ w = replicateM_ n (meta False) *> content (S.putByteString bs) where
+putN_ w = putN (Strict.length bs) (S.putByteString bs) where
   bs = S.runPut w
-  n = Strict.length bs
 
 --------------------------------------------------------------------------------
 -- * Puttable
@@ -143,9 +150,10 @@ class Sized a => Puttable a where
 
 gput :: (G.Generic a, SOP.GFrom a, SOP.All2 Puttable (SOP.GCode a)) => a -> Put
 gput xs0 = case SOP.lengthSList sop of
+    -- skip storing the data constructor when we have only one constructor
+    -- TODO: skip when we only have one _possible_ constructor (skip size=Any constructors)
     1 -> case sop of
-      SOP.Z xs -> products xs -- skip the data constructor when we have only one constructor
-                              -- TODO: skip when we only have one _possible_ constructor (skip size=Any constructors)
+      SOP.Z xs -> products xs
       _ -> error "the impossible happened"
     _ -> sums 0 sop
   where
@@ -158,11 +166,15 @@ gput xs0 = case SOP.lengthSList sop of
     products :: SOP.All Puttable xs => SOP.NP SOP.I xs -> Put
     products SOP.Nil = pure ()
     products (SOP.I x SOP.:* xs) = products1 x xs
-    
+
+    -- the last field is written without parens
+    -- TODO: the last variable width field should be written without parens
     products1 :: (Puttable x, SOP.All Puttable xs) => x -> SOP.NP SOP.I xs -> Put
-    products1 x SOP.Nil = put x -- the last field is written without parens: TODO: the last variable width field
+    products1 x SOP.Nil = put x
     products1 x (SOP.I y SOP.:* ys) = putWithParens x *> products1 y ys
 
+-- TODO: skip parens on fields from left to right when the field itself is strict all the way down
+-- and can have its length calculated from its contents?
 putWithParens :: forall a. Puttable a => a -> Put
 putWithParens = case size @a of
   Variable -> putParens . put

@@ -50,6 +50,10 @@ runPutM ma = case unPutM ma (S 0 0 0 0) of
 
     bs :: Builder -> Strict.ByteString
     bs = Lazy.toStrict . Builder.toLazyByteString
+         -- TODO: use a custom untrimmed strategy or write a dedicated
+         -- builder -> strict bs combinator that uses a doubling buffer
+         -- size? we could modify that to cram everything into one buffer
+         -- in the end
 
     ws :: Builder -> Storable.Vector Word64
     ws = byteStringToVector . trim8 . bs
@@ -57,34 +61,34 @@ runPutM ma = case unPutM ma (S 0 0 0 0) of
 runPut :: Put -> Blob
 runPut = snd . runPutM
 
+{-
 rank1_ :: Rank1 v => v -> Word64 -> Word64
 rank1_ s i
   | i <= 0 = 0
-  | otherwise = rank1 s (fromIntegral i)
+  | otherwise = rank1 s i
 
 rank0_ :: Rank0 v => v -> Word64 -> Word64
 rank0_ s i
   | i <= 0 = 0
-  | otherwise = rank0 s (fromIntegral i)
+  | otherwise = rank0 s i
+-}
 
-access :: Rank1 v => v -> Word64 -> Bool
-access s i = toEnum $ fromIntegral $ rank1_ s i - rank1_ s (i-1)
+access :: Rank1 v => v -> Word64 -> Word64
+access s 1 = rank1 s 1
+access s n = rank1 s n - rank1 s (n - 1)
+
+as :: Rank1 v => a -> a -> v -> Word64 -> a
+as l r s i = case access s i of
+  0 -> l
+  _ -> r
 
 -- Print out a string of S's and D's, corresponding to Shape or Data, from the meta index
 inspectMeta :: Blob -> String
-inspectMeta (Blob n m _ _) = do
-  i <- [1..n]
-  case access m i of
-    True -> "S"
-    False -> "D"
+inspectMeta (Blob n m _ _) = as 'D' 'S' m <$> [1..n]
 
 -- Print out the balanced parentheses representation of our shape index
 inspectShape :: Blob -> String
-inspectShape (Blob n m s _) = do
-  i <- [1..rank1 m n]
-  case access s i of
-    True  -> "("
-    False -> ")"
+inspectShape (Blob n m s _) = as ')' '(' s <$> [1..rank1 m n]
 
 -- Print out our raw content buffer
 inspectContent :: Blob -> String
@@ -95,7 +99,5 @@ inspectBlob :: Blob -> String
 inspectBlob (Blob n m s c) = do
   i <- [1..n]
   case access m i of
-    True  -> case access s $ fromIntegral $ rank1_ m i of
-      True  -> "("
-      False -> ")"
-    False -> "{" ++ show (Strict.index c $ (fromIntegral $ rank0_ m i) - 1) ++ "}"
+    0 -> '{' : shows (Strict.index c $ fromIntegral $ rank0 m i - 1) "}"
+    _ -> [as ')' '(' s $ rank1 m i]

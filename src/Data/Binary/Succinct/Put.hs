@@ -177,7 +177,7 @@ gput xs0 = case SOP.lengthSList sop of
 -- and can have its length calculated from its contents?
 putWithParens :: forall a. Puttable a => a -> Put
 putWithParens = case size @a of
-  Variable -> putParens . put
+  SVariable -> putParens . put
   _ -> put
 
 -- (String,Int64,String)

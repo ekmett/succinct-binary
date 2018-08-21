@@ -19,6 +19,7 @@ module Data.Binary.Succinct.Size
   , Sing(SAny, SVariable, SExactly)
   , (/\), type (/\)
   , (\/), type (\/)
+  , Pad(..)
   ) where
 
 import Data.Functor.Compose as F
@@ -126,6 +127,10 @@ gsize = gsizeOf @xss $ unPOP $ hcpure (Proxy @Sized) ksize where
   gsizeOfProduct Nil = SExactly (SNat @0)
   gsizeOfProduct (Sz sz :* szs) = sz /\ gsizeOfProduct szs
 
+data Pad (n :: Nat) = Pad
+
+instance KnownNat n => Sized (Pad n) where type SizeOf (Pad n) = 'Exactly n; size = sing
+
 instance Sized Word8  where type SizeOf Word8  = 'Exactly 1; size = sing
 instance Sized Word16 where type SizeOf Word16 = 'Exactly 2; size = sing
 instance Sized Word32 where type SizeOf Word32 = 'Exactly 4; size = sing
@@ -134,14 +139,23 @@ instance Sized Int8   where type SizeOf Int8   = 'Exactly 1; size = sing
 instance Sized Int16  where type SizeOf Int16  = 'Exactly 2; size = sing
 instance Sized Int32  where type SizeOf Int32  = 'Exactly 4; size = sing
 instance Sized Int64  where type SizeOf Int64  = 'Exactly 8; size = sing
+
 instance Sized [a] where type SizeOf [a] = 'Variable; size = sing
-instance Sized a => Sized (Maybe a)
-instance (Sized a, Sized b) => Sized (a, b)
-instance (Sized a, Sized b) => Sized (Either a b)
-instance Sized (Proxy a)
 instance Sized Char where type SizeOf Char = 'Variable; size = sing
-instance Sized ()
+
+instance Sized Bool
+instance (Sized a, Sized b) => Sized (Either a b)
+instance Sized a => Sized (Maybe a)
+instance Sized Ordering
+instance Sized (Proxy a)
 instance Sized Void
+instance Sized ()
+instance (Sized a, Sized b) => Sized (a, b)
+instance (Sized a, Sized b, Sized c) => Sized (a, b, c)
+instance (Sized a, Sized b, Sized c, Sized d) => Sized (a, b, c, d)
+instance (Sized a, Sized b, Sized c, Sized d, Sized e) => Sized (a, b, c, d, e)
+instance (Sized a, Sized b, Sized c, Sized d, Sized e, Sized f) => Sized (a, b, c, d, e, f)
+instance (Sized a, Sized b, Sized c, Sized d, Sized e, Sized f, Sized g) => Sized (a, b, c, d, e, f, g)
 
 instance Sized (f (g a)) => Sized (F.Compose f g a)
 instance (Sized (f a), Sized (g a)) => Sized (F.Product f g a)

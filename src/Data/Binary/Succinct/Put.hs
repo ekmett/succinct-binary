@@ -177,23 +177,32 @@ gput xs0 = case SOP.lengthSList sop of
 -- and can have its length calculated from its contents?
 putWithParens :: forall a. Puttable a => a -> Put
 putWithParens = case size @a of
-  Variable -> putParens . put
+  SVariable -> putParens . put
   _ -> put
 
 -- (String,Int64,String)
 -- ((a)bc)
 
-instance Puttable Word64 where
-  put = putN 8 . S.putWord64le
-
-instance Puttable Word32 where
-  put = putN 4 . S.putWord32le
+instance Puttable Word8 where
+  put = putN 1 . S.putWord8
 
 instance Puttable Word16 where
   put = putN 2 . S.putWord16le
 
-instance Puttable Word8 where
-  put = putN 1 . S.putWord8
+instance Puttable Word32 where
+  put = putN 4 . S.putWord32le
+
+instance Puttable Word64 where
+  put = putN 8 . S.putWord64le
+
+instance Puttable Int8 where
+  put = putN 1 . S.putInt8
+
+instance Puttable Int16 where
+  put = putN 2 . S.putInt16le
+
+instance Puttable Int32 where
+  put = putN 4 . S.putInt32le
 
 instance Puttable Int64 where
   put = putN 8 . S.putInt64le
@@ -201,23 +210,21 @@ instance Puttable Int64 where
 instance Puttable Char where
   put = putBS . UTF8.fromString . pure
 
-instance Puttable Int32 where
-  put = putN 4 . S.putInt32le
-
-instance Puttable Int16 where
-  put = putN 2 . S.putInt16le
-
-instance Puttable Int8 where
-  put = putN 1 . S.putInt8
-
--- instance Puttable Void -- TODO: fix GSumFrom in Generics.SOP to allow V1
-instance Puttable ()
-instance Puttable Void
-instance Puttable (Proxy a)
-instance Puttable a => Puttable (Maybe a)
-instance Puttable a => Puttable [a]
-instance (Puttable a, Puttable b) => Puttable (a, b)
+instance Puttable Bool
 instance (Puttable a, Puttable b) => Puttable (Either a b)
-instance Puttable (f (g a)) => Puttable (Compose f g a)
+instance Puttable a => Puttable (Maybe a)
+instance Puttable Ordering
+instance Puttable (Proxy a)
+--instance Puttable Void
+instance Puttable a => Puttable [a]
+instance Puttable ()
+instance (Puttable a, Puttable b) => Puttable (a, b)
+instance (Puttable a, Puttable b, Puttable c) => Puttable (a, b, c)
+instance (Puttable a, Puttable b, Puttable c, Puttable d) => Puttable (a, b, c, d)
+instance (Puttable a, Puttable b, Puttable c, Puttable d, Puttable e) => Puttable (a, b, c, d, e)
+instance (Puttable a, Puttable b, Puttable c, Puttable d, Puttable e, Puttable f) => Puttable (a, b, c, d, e, f)
+instance (Puttable a, Puttable b, Puttable c, Puttable d, Puttable e, Puttable f, Puttable g) => Puttable (a, b, c, d, e, f, g)
+
+instance Puttable (f (g a)) => Puttable (F.Compose f g a)
 instance (Puttable (f a), Puttable (g a)) => Puttable (F.Product f g a)
 instance (Puttable (f a), Puttable (g a)) => Puttable (F.Sum f g a)

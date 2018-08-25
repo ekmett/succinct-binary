@@ -29,9 +29,11 @@ library
     cereal >= 0.5.7,
     contravariant,
     generics-sop,
+    ghc-prim,
     hw-rankselect >= 0.12.0.4,
     hw-rankselect-base,
     hw-balancedparens,
+    profunctors,
     spool,
     utf8-string,
     vector
@@ -39,10 +41,8 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Data.Binary.Succinct
-    Data.Binary.Succinct.Blob
-    Data.Binary.Succinct.Get
+    Data.Binary.Succinct.Generics
+    Data.Binary.Succinct.Internal
     Data.Binary.Succinct.Orphans
-    Data.Binary.Succinct.Put
-    Data.Binary.Succinct.Size
 
   ghc-options: -Wall

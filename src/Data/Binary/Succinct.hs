@@ -1,11 +1,8 @@
 module Data.Binary.Succinct
-  ( module Data.Binary.Succinct.Get
-  , module Data.Binary.Succinct.Put
-  , module Data.Binary.Succinct.Blob
-  , module Data.Binary.Succinct.Size
+  ( module Data.Binary.Succinct.Generics
+  , module Data.Binary.Succinct.Internal
   ) where
 
-import Data.Binary.Succinct.Get
-import Data.Binary.Succinct.Put
-import Data.Binary.Succinct.Blob
-import Data.Binary.Succinct.Size
+import Data.Binary.Succinct.Generics
+import Data.Binary.Succinct.Internal
+import Data.Binary.Succinct.Orphans ()

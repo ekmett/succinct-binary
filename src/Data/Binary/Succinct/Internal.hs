@@ -13,6 +13,7 @@
 {-# language FlexibleContexts #-}
 {-# language DeriveFunctor #-}
 {-# language PatternGuards #-}
+{-# language BangPatterns #-}
 -- {-# options_ghc -Wno-unticked-promoted-constructors #-} -- does this not actually work?
 
 module Data.Binary.Succinct.Internal where
@@ -144,69 +145,43 @@ instance Monad Get where
 -- * Size Annotations
 --------------------------------------------------------------------------------
 
-data SizeAnn (ty :: GenType) (g :: * -> *) where
-  TypeAnn :: Size -> Maybe Word8 -> SizeAnn 'Ty g
-  SumAnn :: Size -> Maybe Word8 -> Word8 -> Word8 -> SizeAnn 'Constructors g
-  ConAnn :: Size -> SizeAnn 'Constructors g
-  ProdAnn :: Size -> SizeAnn 'Fields g
-  SelAnn :: Size -> SizeAnn 'Fields g
+data SizeAnn (ty :: GenType) (g :: * -> *) = SizeAnn { runSizeAnn :: Size }
+  deriving Show
 
-getConAnn :: GShape SizeAnn 'Constructors p t -> (Size, Maybe Word8, Word8)
-getConAnn (S (SumAnn s dc _ k) _ _) = (s, dc, k)
-getConAnn (Con (ConAnn s) _) = (s, Just 0, 1)
-getConAnn _ = error "bad con ann"
-
-getFieldAnn :: GShape SizeAnn 'Fields p t -> Size
-getFieldAnn (P (ProdAnn s) _ _) = s
-getFieldAnn (Sel (SelAnn s) _ _) = s
-getFieldAnn _ = error "bad field ann"
+tweak :: SizeAnn t g -> SizeAnn t' g'
+tweak (SizeAnn s) = SizeAnn s
 
 instance ShowAnn SizeAnn where
-  showsPrecAnn d (TypeAnn s dc) = showParen (d > 10) $
-    showString "TypeAnn " . showsPrec 11 s . showChar ' ' . showsPrec 11 dc
-  showsPrecAnn d (SumAnn s dc i j) = showParen (d > 10) $
-    showString "SumAnn " . showsPrec 11 s . showChar ' ' . showsPrec 11 dc . showChar ' ' . showsPrec 11 i . showChar ' ' . showsPrec 11 j
-  showsPrecAnn d (ConAnn s) = showParen (d > 10) $
-    showString "ConAnn " . showsPrec 11 s
-  showsPrecAnn d (ProdAnn s) = showParen (d > 10) $
-    showString "ProdAnn " . showsPrec 11 s
-  showsPrecAnn d (SelAnn s) = showParen (d > 10) $
-    showString "SelAnn " . showsPrec 11 s
+  showsPrecAnn = showsPrec
+
+sz :: GShape SizeAnn ty Serializable t -> Size
+sz (Type s _ _) = runSizeAnn s
+sz V = Any
+sz (S s _ _) = runSizeAnn s
+sz (Con s _) = runSizeAnn s
+sz U = Exactly 0
+sz (P s _ _) = runSizeAnn s
+sz (Sel s _ _) = runSizeAnn s
+sz (K (_ :: Proxy a)) = size @a
+
+sizeAnn :: GShape SizeAnn ty Serializable t -> SizeAnn ty' t'
+sizeAnn = SizeAnn . sz
 
 instance Annotation SizeAnn Serializable where
-  typeAnn _ V = TypeAnn Any Nothing
-  typeAnn _ (Con (ConAnn s) _) = TypeAnn s (Just 0)
-  typeAnn _ (S (SumAnn s mdc _ _) _ _) = case mdc of
-     Nothing -> TypeAnn (Exactly 1 /\ s) mdc -- we have to store the tag
-     Just _dc -> TypeAnn s mdc -- no tag
-  typeAnn _ _ = error "bad type ann"
-
-  sumAnn l r = SumAnn (sl \/ sr) (merge sl sr dl dr) nl (nl + nr) where
-    (sl,dl,nl) = getConAnn l
-    (sr,dr,nr) = getConAnn r
-    merge Any _ _ (Just k) = Just (nl + k) -- test
-    merge _ Any (Just k) _ = Just k -- test
-    merge _ _ Nothing (Just k) = Just (nl + k)
-    merge _ _ (Just k) Nothing = Just k
-    merge _ _ _ _ = Nothing
-
-  -- when we annotate products this becomes non-recursive
-  conAnn U = ConAnn (Exactly 0)
-  conAnn (Sel (SelAnn s) _ _) = ConAnn s
-  conAnn (P (ProdAnn s) _ _) = ConAnn s
-  conAnn _ = error "bad con ann"
-
-  prodAnn l r = ProdAnn (getFieldAnn l /\ getFieldAnn r)
-  selAnn _ (K (_ :: Proxy a)) = SelAnn (size @a)
+  typeAnn _ = sizeAnn
+  sumAnn l r = SizeAnn (sz l \/ sz r)
+  conAnn = sizeAnn
+  prodAnn l r = SizeAnn (sz l /\ sz r)
+  selAnn _ = sizeAnn
 
 --------------------------------------------------------------------------------
 -- * Serial
 --------------------------------------------------------------------------------
 
-data Serial a b = Serial !Size (Maybe Word8) (a -> Put) (Get b)
+data Serial a b = Serial !Size (a -> Put) (Get b)
 
 instance Profunctor Serial where
-  dimap l r (Serial s dc f g) = Serial s dc (f . l) (r <$> g)
+  dimap l r (Serial s f g) = Serial s (f . l) (r <$> g)
 
 --------------------------------------------------------------------------------
 -- * Serializable
@@ -218,29 +193,29 @@ class Serializable a where
   serial = gserial
 
 size :: forall a. Serializable a => Size
-size = case serial @a of Serial s _ _ _ -> s
+size = case serial @a of Serial s _ _ -> s
 
 put :: Serializable a => a -> Put
-put a = case serial of Serial _ _ p _ -> p a
+put a = case serial of Serial _ p _ -> p a
 
 get :: Serializable a => Get a
-get = case serial of Serial _ _ _ g -> g
+get = case serial of Serial _ _ g -> g
 
 instance Serializable Void
 
 instance Serializable ()
 
 instance Serializable Word8 where
-  serial = Serial (Exactly 1) (Just 0) put8 todo
+  serial = Serial (Exactly 1) put8 todo
 
 instance Serializable Word16 where
-  serial = Serial (Exactly 2) (Just 0) (putN 2 . word16LE) todo
+  serial = Serial (Exactly 2) (putN 2 . word16LE) todo
 
 instance Serializable Word32 where
-  serial = Serial (Exactly 4) (Just 0) (putN 4 . word32LE) todo
+  serial = Serial (Exactly 4) (putN 4 . word32LE) todo
 
 instance Serializable Word64 where
-  serial = Serial (Exactly 8) (Just 0) (putN 8 . word64LE) todo
+  serial = Serial (Exactly 8) (putN 8 . word64LE) todo
 
 instance (Serializable a, Serializable b) => Serializable (a, b)
 instance (Serializable a, Serializable b) => Serializable (Either a b)
@@ -252,23 +227,23 @@ todo = error "haven't gotten to it yet"
 
 gserial :: forall a. Shaped Serializable a => Serial a a
 gserial = case shape @Serializable @a @SizeAnn of
-  Shape (Type (TypeAnn s mdc) _nt cons0) -> Serial s mdc (\a -> gput cons0 (unM1 $ from a) 0) todo where
+  Shape (Type (SizeAnn s) _nt cons0) -> Serial s (\a -> gput cons0 (unM1 $ from a) 0) todo where
+
+    gcons :: GShape SizeAnn 'Constructors Serializable t -> Word8
+    gcons (Con _ _) = 1
+    gcons (S _ l r) = gcons l + gcons r
+    gcons _ = error "impossible"
 
     gput :: GShape SizeAnn 'Constructors Serializable t -> t a -> Word8 -> Put
-    gput V v _ = case v :: V1 a of {}
-    gput (S (SumAnn _ _ _ _) l _) (L1 a) i = gput l a i
-    gput (S (SumAnn _ _ k _) _ r) (R1 b) i = gput r b (i+k)
-    gput (Con (ConAnn _) c) (M1 b) i = case mdc of
-      Nothing -> put8 i <> gputCon c b False
-      Just j
-        | i == j    -> gputCon c b False
-        | otherwise -> error "impossible constructor"
-    gput _ _ _ = error "bad constructor ann in put"
+    gput V v !_ = case v :: V1 a of {}
+    gput (S _ l _) (L1 a) i = gput l a i
+    gput (S _ l r) (R1 b) i = gput r b $! i + gcons l
+    gput (Con _ c) (M1 b) i = put8 i <> gputCon c b False
 
     gputCon :: GShape SizeAnn 'Fields Serializable t -> t a -> Bool -> Put
     gputCon U U1 _ = mempty
     gputCon (P _ l r) (l1 :*: r1) v =
-       gputCon l l1 (v || isVariable (getFieldAnn r)) <> gputCon r r1 v
+       gputCon l l1 (v || isVariable (getFieldSize r)) <> gputCon r r1 v
     gputCon (Sel _ _ds fld) (M1 p) b = gputSel fld p b
 
     gputSel :: GShape SizeAnn 'Field Serializable t -> t a -> Bool -> Put
@@ -279,6 +254,11 @@ gserial = case shape @Serializable @a @SizeAnn of
 isVariable :: Size -> Bool
 isVariable Variable = True
 isVariable _ = False
+
+getFieldSize :: GShape ann 'Fields p t -> Size
+getFieldSize = todo -- fell asleep
+
+
 
 --------------------------------------------------------------------------------
 -- * Blobs

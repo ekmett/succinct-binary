@@ -41,7 +41,7 @@ import GHC.Generics
 -- * Size Internals
 --------------------------------------------------------------------------------
 
-data Size = Any | Variable | Exactly !Int
+data Size = Any | Variable | Exactly Int
   deriving (Eq,Ord,Show,Read)
 
 -- @((\/), Any)@ is a bounded semilattice
@@ -57,6 +57,8 @@ Any /\ _ = Any
 _ /\ Any = Any
 Exactly x /\ Exactly y = Exactly (x + y) -- but these don't compute nicely
 _ /\ _ = Variable
+
+-- sizeof [a] = 1 /\ (0 \/ (sizeof a /\ sizeof [a]))
 
 --------------------------------------------------------------------------------
 -- * Put Internals
@@ -94,8 +96,6 @@ paren v = Put $ \(State i b j c) -> case push v j c of
 
 parens :: Put -> Put
 parens p = paren True <> p <> paren False
-
-
 
 -- push a run of 0s into the meta buffer
 metas :: Int -> Put
@@ -161,19 +161,31 @@ getFieldAnn (P (ProdAnn s) _ _) = s
 getFieldAnn (Sel (SelAnn s) _ _) = s
 getFieldAnn _ = error "bad field ann"
 
+instance ShowAnn SizeAnn where
+  showsPrecAnn d (TypeAnn s dc) = showParen (d > 10) $
+    showString "TypeAnn " . showsPrec 11 s . showChar ' ' . showsPrec 11 dc
+  showsPrecAnn d (SumAnn s dc i j) = showParen (d > 10) $
+    showString "SumAnn " . showsPrec 11 s . showChar ' ' . showsPrec 11 dc . showChar ' ' . showsPrec 11 i . showChar ' ' . showsPrec 11 j
+  showsPrecAnn d (ConAnn s) = showParen (d > 10) $
+    showString "ConAnn " . showsPrec 11 s
+  showsPrecAnn d (ProdAnn s) = showParen (d > 10) $
+    showString "ProdAnn " . showsPrec 11 s
+  showsPrecAnn d (SelAnn s) = showParen (d > 10) $
+    showString "SelAnn " . showsPrec 11 s
+
 instance Annotation SizeAnn Serializable where
   typeAnn _ V = TypeAnn Any Nothing
   typeAnn _ (Con (ConAnn s) _) = TypeAnn s (Just 0)
   typeAnn _ (S (SumAnn s mdc _ _) _ _) = case mdc of
-    Nothing -> TypeAnn (Exactly 1 /\ s) mdc -- we have to store the tag
-    Just _dc -> TypeAnn s mdc -- no tag
+     Nothing -> TypeAnn (Exactly 1 /\ s) mdc -- we have to store the tag
+     Just _dc -> TypeAnn s mdc -- no tag
   typeAnn _ _ = error "bad type ann"
 
   sumAnn l r = SumAnn (sl \/ sr) (merge sl sr dl dr) nl (nl + nr) where
     (sl,dl,nl) = getConAnn l
     (sr,dr,nr) = getConAnn r
-    merge Any _ _ (Just k) = Just (nl + k)
-    merge _ Any (Just k) _ = Just k
+    merge Any _ _ (Just k) = Just (nl + k) -- test
+    merge _ Any (Just k) _ = Just k -- test
     merge _ _ Nothing (Just k) = Just (nl + k)
     merge _ _ (Just k) Nothing = Just k
     merge _ _ _ _ = Nothing

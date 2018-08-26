@@ -21,7 +21,6 @@ import Data.Int
 import Data.Void
 import Data.Word
 import Generics.SOP
-import Generics.SOP.NP
 import Generics.SOP.GGP
 import GHC.Generics as GHC
 
@@ -47,26 +46,24 @@ _ /\ Any = Any
 Exactly x /\ Exactly y = Exactly (x + y) -- but these don't compute nicely
 _ /\ _ = Variable
 
+
 gsize :: forall xss. All2 Sized xss => Size
-gsize = sums npnp where -- constructors where
+gsize = sums $ hcollapse np where -- constructors where
   ksize :: forall x. Sized x => K Size x
   ksize = K (size @x)
 
+  np :: NP (K Size) xss
+  np = hcmap (Proxy @(All Sized)) (\xs -> K (products $ hcollapse xs)) npnp
+
   npnp :: NP (NP (K Size)) xss
-  npnp = unPOP $ cpure_POP (Proxy :: Proxy Sized) ksize
+  npnp = unPOP $ hcpure (Proxy @Sized) ksize
 
-  sums :: NP (NP (K Size)) xss' -> Size
-  sums Nil         = Any
-  sums (xs :* Nil) = products xs
-  sums xss         = Exactly 1 /\ sums1 xss
+  sums :: [Size] -> Size
+  sums [x] = x
+  sums xs = Exactly 1 /\ foldr (\/) Any xs
 
-  sums1 :: NP (NP (K Size)) xss' -> Size
-  sums1 Nil = Any
-  sums1 (x :* xs) = products x \/ sums1 xs
-
-  products :: NP (K Size) xss' -> Size
-  products Nil = Exactly 0
-  products (K a :* xs) = a /\ products xs
+  products :: [Size] -> Size
+  products = foldr (/\) (Exactly 0)
 
 instance Sized Word8  where size = Exactly 1
 instance Sized Word16 where size = Exactly 2

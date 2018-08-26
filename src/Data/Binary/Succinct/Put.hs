@@ -169,6 +169,9 @@ instance Puttable Int16 where
 instance Puttable Int8 where
   put = putN 1 . Builder.int8
 
+instance Puttable Char where
+  put = put . (fromIntegral . fromEnum :: Char -> Word32)
+
 instance Puttable ()
 instance Puttable (Proxy a)
 instance Puttable a => Puttable (Maybe a)

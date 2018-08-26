@@ -32,23 +32,22 @@ class Sized a where
   default size :: (GHC.Generic a, GFrom a, All2 Sized (GCode a)) => Size
   size = gsize @(GCode a)
 
--- @((\/), Any)@ is a monoid
+-- @((\/), Any)@ is a semilattice
 (\/) :: Size -> Size -> Size
 Any \/ x = x
 x \/ Any = x
-Exactly x \/ Exactly y | x == y = Exactly x -- needs type equality 
+Exactly x \/ Exactly y | x == y = Exactly x
 _ \/ _ = Variable
 
--- @((/\), Exactly 0)@ is a monoid
+-- @((/\), Exactly 0)@ is a commutative monoid
 (/\) :: Size -> Size -> Size
 Any /\ _ = Any
 _ /\ Any = Any
-Exactly x /\ Exactly y = Exactly (x + y) -- but these don't compute nicely
+Exactly x /\ Exactly y = Exactly (x + y)
 _ /\ _ = Variable
 
-
 gsize :: forall xss. All2 Sized xss => Size
-gsize = sums $ hcollapse np where -- constructors where
+gsize = sums $ hcollapse np where
   ksize :: forall x. Sized x => K Size x
   ksize = K (size @x)
 
@@ -65,6 +64,7 @@ gsize = sums $ hcollapse np where -- constructors where
   products :: [Size] -> Size
   products = foldr (/\) (Exactly 0)
 
+instance Sized [a] where size = Variable
 instance Sized Word8  where size = Exactly 1
 instance Sized Word16 where size = Exactly 2
 instance Sized Word32 where size = Exactly 4
@@ -73,12 +73,11 @@ instance Sized Int8  where size = Exactly 1
 instance Sized Int16 where size = Exactly 2
 instance Sized Int32 where size = Exactly 4
 instance Sized Int64 where size = Exactly 8
-instance Sized [a] where size = Variable
+instance Sized Char where size = Exactly 4
 instance Sized a => Sized (Maybe a)
 instance (Sized a, Sized b) => Sized (a, b)
 instance (Sized a, Sized b) => Sized (Either a b)
 instance Sized (Proxy a)
-instance Sized Char where size = Variable
 instance Sized ()
 instance Sized Void
 

@@ -1,3 +1,5 @@
+{-# options_ghc -Wno-orphans #-}
+
 module Data.Binary.Succinct.Blob
   ( Blob(..)
   , blob
@@ -33,6 +35,10 @@ data Blob = Blob
 -- for debugging
 instance Show Blob where
   show = inspectBlob
+
+-- evil orphan for debugging
+instance Show Put where
+  show = show . blob
 
 blob :: Put -> Blob
 blob ma = case runPut ma (State 0 0 0 0) of

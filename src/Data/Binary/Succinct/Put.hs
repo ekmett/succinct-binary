@@ -5,15 +5,17 @@
 {-# language EmptyCase #-}
 {-# language GADTs #-}
 {-# language TypeOperators #-}
+{-# language RankNTypes #-}
+{-# language TypeApplications #-}
+{-# language ScopedTypeVariables #-}
 {-# options_ghc -funbox-strict-fields #-}
 module Data.Binary.Succinct.Put {- .Internal -}
-  ( Put, PutM(..)
-  , meta, shape, content
+  ( Put(..)
   -- guts
-  , S(..)
+  , meta, metas, paren, parens, content
+  , State(..)
   , W(..)
   , Result(..)
-  , putParens
   , put8
   , Puttable(..)
   , putN
@@ -21,16 +23,13 @@ module Data.Binary.Succinct.Put {- .Internal -}
   , gput
   ) where
 
-import Control.Monad (ap, replicateM_)
 import Data.Bits
-import Data.Bits.Coding
-import Data.Bytes.Put
-import Data.ByteString as Strict
-import Data.ByteString.Builder
+import Data.ByteString.Lazy as Lazy
+import Data.ByteString.Builder as Builder
 import Data.Int
 import Data.Proxy
-import qualified Data.Serialize.Put as S
--- import Data.Void
+import Data.Semigroup
+import Data.Void
 import Data.Word
 import qualified GHC.Generics as G
 import Data.Functor.Compose as F
@@ -39,102 +38,79 @@ import Data.Functor.Sum as F
 import qualified Generics.SOP as SOP
 import qualified Generics.SOP.GGP as SOP
 
-putLSB :: MonadPut m => Bool -> Coding m ()
-putLSB v = Coding $ \k i b ->
-  if i == 7
-  then do
-    putWord8 (pushBit b i v)
-    k () 0 0
-  else (k () $! i + 1) $! pushBit b i v
-  where
-    pushBit w i False = clearBit w i
-    pushBit w i True  = setBit   w i
+import Data.Binary.Succinct.Size
 
-data S = S !Int !Word8 !Int !Word8
-data W = W !Builder !Builder !Builder
+data State = State !Int !Word8 !Int !Word8
+data W = W !Builder !Builder !Builder !Word64
 
 instance Semigroup W where
-  W a b c <> W d e f = W (a <> d) (b <> e) (c <> f)
+  W a b c m <> W d e f n = W (a <> d) (b <> e) (c <> f) (m + n)
 
 instance Monoid W where
-  mempty = W mempty mempty mempty
+  mempty = W mempty mempty mempty 0
   mappend = (<>)
 
-data Result a = Result a {-# UNPACK #-} !S {-# UNPACK #-} !W
-  deriving Functor
+data Result = Result {-# UNPACK #-} !State {-# UNPACK #-} !W
 
-type Put = PutM ()
+newtype Put = Put { runPut :: State -> Result }
 
-newtype PutM a = PutM { unPutM :: S -> Result a }
-  deriving Functor
+instance Semigroup Put where
+  f <> g = Put $ \s -> case runPut f s of
+    Result s' m -> case runPut g s' of
+      Result s'' n -> Result s'' (m <> n)
 
-instance Applicative PutM where
-  pure a = PutM $ \s -> Result a s mempty
-  (<*>) = ap
+instance Monoid Put where
+  mempty = Put $ \s -> Result s mempty
 
-instance Monad PutM where
-  PutM m >>= f = PutM $ \s -> case m s of
-    Result a s' w -> case unPutM (f a) s' of
-      Result b s'' w' -> Result b s'' (w <> w')
+push :: Bool -> Int -> Word8 -> (Builder, Int, Word8)
+push v i b
+  | i == 7    = (Builder.word8 b', 0, 0)
+  | otherwise = (mempty, i + 1, b')
+  where b' = if v then setBit b i else b
+{-# INLINE push #-}
 
--- your job is to properly deal with managing meta, shape and content coherently
+meta :: Bool -> Put
+meta v = Put $ \(State i b j c) -> case push v i b of
+  (m,i',b') -> Result (State i' b' j c) (W m mempty mempty 1)
 
-meta :: Coding S.PutM a -> PutM a
-meta m = PutM $ \(S o1 d1 o2 d2) -> case S.runPutMBuilder (runCoding m go o1 d1) of
-  ((a,o1',d1'), builder) -> Result a (S o1' d1' o2 d2) (W builder mempty mempty)
-  where
-    go :: a -> Int -> Word8 -> S.PutM (a, Int, Word8)
-    go a o1' d1' = pure (a, o1', d1')
+paren :: Bool -> Put
+paren v = Put $ \(State i b j c) -> case push v j c of
+  (s,j',c') -> case push True i b of
+    (m, i', b') -> Result (State i' b' j' c') (W m s mempty 1)
 
-shape :: Coding S.PutM a -> PutM a
-shape m = PutM $ \(S o1 d1 o2 d2) -> case S.runPutMBuilder (runCoding m go o2 d2) of
-  ((a, o2', d2'), b) -> Result a (S o1 d1 o2' d2') (W mempty b mempty)
-  where
-    go :: a -> Int -> Word8 -> S.PutM (a, Int, Word8)
-    go a o2' d2' = pure (a, o2', d2')
+parens :: Put -> Put
+parens p = paren True <> p <> paren False
 
--- should this log how much is put and just automatically scribble into shape?
--- PutM doesn't give us enough info to do that efficiently.
-content :: S.PutM a -> PutM a
-content m = PutM $ \s -> case S.runPutMBuilder m of
-  (a, b) -> Result a s (W mempty mempty b)
+-- push a run of 0s into the meta buffer
+metas :: Int -> Put
+metas k
+  | k <= 0 = mempty
+  | otherwise = Put $ \(State i b j c) -> case divMod (i + k) 8 of
+    (0,r) -> Result (State r b j c) $ W mempty mempty mempty (fromIntegral k)
+    (q,r) -> Result (State r 0 j c) $
+      W (Builder.word8 b <> stimesMonoid (q-1) (Builder.word8 0))
+        mempty
+        mempty
+        (fromIntegral k)
 
-{-
-  meta
-  11110000110000111100000011 poppy, compact, not succinct
-     /                     \
-     content              shape
-  #1 #2 #2 'h' 'i'    (((()()))())
-                      000010111011
--}
-
-putParen :: Bool -> Put
-putParen p = do
-  meta $ putLSB True
-  shape $ putLSB p
-
-putParens :: Put -> Put
-putParens p = putParen True *> p <* putParen False
+content :: Builder -> Put
+content m = Put $ \s -> Result s (W mempty mempty m 0)
 
 put8 :: Word8 -> Put
-put8 w = meta (putLSB False) *> content (putWord8 w)
+put8 x = meta False <> content (word8 x)
 
-putN :: Int -> S.Put -> Put
--- TODO: replace that replicateM_ !!!
-putN i w = meta (replicateM_ i $ putLSB False) *> content w
+putN :: Int -> Builder -> Put
+putN i w = metas i <> content w
 
-putN_ :: S.Put -> Put
--- TODO: replace that replicateM_ !!!
-putN_ w = meta (replicateM_ n $ putLSB False) *> content (S.putByteString bs)
-  where
-    bs = S.runPut w
-    n = Strict.length bs
+putN_ :: Builder -> Put
+putN_ w = putN (fromIntegral $ Lazy.length bs) (Builder.lazyByteString bs) where
+  bs = Builder.toLazyByteString w
 
 --------------------------------------------------------------------------------
 -- * Puttable
 --------------------------------------------------------------------------------
 
-class Puttable a where
+class Sized a => Puttable a where
   put :: a -> Put
   default put :: (G.Generic a, SOP.GFrom a, SOP.All2 Puttable (SOP.GCode a)) => a -> Put
   put = gput
@@ -142,45 +118,57 @@ class Puttable a where
 gput :: (G.Generic a, SOP.GFrom a, SOP.All2 Puttable (SOP.GCode a)) => a -> Put
 gput xs0 = case SOP.lengthSList sop of
     1 -> case sop of
-      SOP.SOP (SOP.Z xs) -> putParens (products xs)
+      SOP.Z xs -> products xs
       _ -> error "the impossible happened"
     _ -> sums 0 sop
   where
-    sop = SOP.gfrom xs0
+    SOP.SOP sop = SOP.gfrom xs0
 
-    sums :: SOP.All2 Puttable xss => Word8 -> SOP.SOP SOP.I xss -> Put
-    sums !acc (SOP.SOP (SOP.Z xs)) = putParens (put8 acc *> products xs)
-    sums acc (SOP.SOP (SOP.S xss)) = sums (acc + 1) (SOP.SOP xss)
+    sums :: SOP.All2 Puttable xss => Word8 -> SOP.NS (SOP.NP SOP.I) xss -> Put
+    sums !acc (SOP.Z xs) = put8 acc <> products xs
+    sums acc (SOP.S xss) = sums (acc + 1) xss
 
     products :: SOP.All Puttable xs => SOP.NP SOP.I xs -> Put
-    products SOP.Nil = pure ()
-    products (SOP.I x SOP.:* xs) = putParens (put x) *> products xs
+    products SOP.Nil = mempty
+    products (SOP.I x SOP.:* xs) = products1 x xs
+
+    -- the last field is written without parens
+    products1 :: (Puttable x, SOP.All Puttable xs) => x -> SOP.NP SOP.I xs -> Put
+    products1 x SOP.Nil = put x
+    products1 x (SOP.I y SOP.:* ys) = putWithParens x <> products1 y ys
+
+putWithParens :: forall a. Puttable a => a -> Put
+putWithParens = case size @a of
+  Variable -> parens . put
+  _ -> put
+
+instance Puttable Void where
+  put = absurd
 
 instance Puttable Word64 where
-  put = putN 8 . S.putWord64le
+  put = putN 8 . Builder.word64LE
 
 instance Puttable Word32 where
-  put = putN 4 . S.putWord32le
+  put = putN 4 . Builder.word32LE
 
 instance Puttable Word16 where
-  put = putN 2 . S.putWord16le
+  put = putN 2 . Builder.word16LE
 
 instance Puttable Word8 where
-  put = putN 1 . S.putWord8
+  put = putN 1 . Builder.word8
 
 instance Puttable Int64 where
-  put = putN 8 . S.putInt64le
+  put = putN 8 . Builder.int64LE
 
 instance Puttable Int32 where
-  put = putN 4 . S.putInt32le
+  put = putN 4 . Builder.int32LE
 
 instance Puttable Int16 where
-  put = putN 2 . S.putInt16le
+  put = putN 2 . Builder.int16LE
 
 instance Puttable Int8 where
-  put = putN 1 . S.putInt8
+  put = putN 1 . Builder.int8
 
--- instance Puttable Void -- TODO: fix GSumFrom in Generics.SOP to allow V1
 instance Puttable ()
 instance Puttable (Proxy a)
 instance Puttable a => Puttable (Maybe a)

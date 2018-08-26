@@ -1,0 +1,2 @@
+:m + Data.Word Data.Void
+:set -XTypeApplications

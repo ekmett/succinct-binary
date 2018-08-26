@@ -8,12 +8,19 @@
 {-# language ScopedTypeVariables #-}
 {-# language TypeApplications #-}
 {-# language TypeOperators #-}
-module Data.Binary.Succinct.Get 
+module Data.Binary.Succinct.Get where
+
+foo :: Int
+foo = 1
+
+{-
   ( Get(..)
   , get8
   , Gettable(..)
   , liftGet
   ) where
+
+
 
 import Control.Monad (ap)
 import Data.Binary.Succinct.Blob
@@ -133,3 +140,5 @@ instance (Gettable a, Gettable b) => Gettable (Either a b)
 instance Gettable (f (g a)) => Gettable (F.Compose f g a)
 instance (Gettable (f a), Gettable (g a)) => Gettable (F.Product f g a)
 instance (Gettable (f a), Gettable (g a)) => Gettable (F.Sum f g a)
+
+-}

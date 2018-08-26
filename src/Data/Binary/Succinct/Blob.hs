@@ -1,118 +1,89 @@
 module Data.Binary.Succinct.Blob
   ( Blob(..)
-  , runPut
+  , blob
   -- guts
-  , metaBitCount
-  , shapeBitCount
-  , contentByteCount
   , inspectMeta
   , inspectShape
   , inspectContent
   , inspectBlob
   ) where
 
-import Control.Monad (replicateM_)
 import Data.Word
 import Data.Bits
-import Data.Bits.Coding as Bits
-import Data.Bytes.Put
 import Data.ByteString as Strict
 import Data.ByteString.Builder as Builder
 import Data.ByteString.Lazy as Lazy
+import Data.Semigroup
 import qualified Data.Vector.Storable as Storable
 import HaskellWorks.Data.BalancedParens.RangeMinMax as BP
 import HaskellWorks.Data.RankSelect.CsPoppy as CsPoppy
 import HaskellWorks.Data.RankSelect.Base.Rank0
 import Data.Vector.Storable.ByteString
-import HaskellWorks.Data.BalancedParens
 
 import Data.Binary.Succinct.Put
 import Data.Binary.Succinct.Orphans ()
 
 data Blob = Blob
-  { blobMeta    :: CsPoppy
+  { blobSize    :: Word64
+  , blobMeta    :: CsPoppy
   , blobShape   :: RangeMinMax (Storable.Vector Word64)
   , blobContent :: Strict.ByteString
-  } deriving Show
+  } -- deriving Show
 
-runPutM :: PutM a -> (a, Blob)
-runPutM ma = case unPutM ma' (S 0 0 0 0) of
-    Result a _ (W m s c) -> (a, Blob 
-      { blobMeta = makeCsPoppy $ ws m
-      , blobShape = mkRangeMinMax $ ws s
-      , blobContent = bs c
-      })
+-- for debugging
+instance Show Blob where
+  show = inspectBlob
+
+blob :: Put -> Blob
+blob ma = case runPut ma (State 0 0 0 0) of
+  Result (State i b j b') (W m s c n) -> Blob
+    { blobSize = n
+    , blobMeta = makeCsPoppy $ ws $ flush8 i b m
+    , blobShape = mkRangeMinMax $ ws $ flush8 j b' s
+    , blobContent = bs c
+    }
   where
-    pad = replicateM_ 7 $ putWord8 0
-    flush8 = Bits.putAligned pad
+    flush :: Int -> Word8 -> Builder -> Builder
+    flush 0 _ xs = xs
+    flush _ b xs = xs <> word8 b
+
+    flush8 :: Int -> Word8 -> Builder -> Builder
+    flush8 r k d = flush r k d <> stimes (7 :: Int) (word8 0)
+
+    trim8 :: Strict.ByteString -> Strict.ByteString
     trim8 b = Strict.take (Strict.length b .&. complement 7) b
+
+    bs :: Builder -> Strict.ByteString
     bs = Lazy.toStrict . Builder.toLazyByteString
+
+    ws :: Builder -> Storable.Vector Word64
     ws = byteStringToVector . trim8 . bs
-    ma' = do
-      result <- ma
-      meta flush8
-      shape flush8
-      -- content pad
-      return result
-  
-runPut :: Put -> Blob
-runPut = snd . runPutM
 
-rank1_ :: Rank1 v => v -> Int -> Word64
-rank1_ s i
-  | i <= 0 = 0
-  | otherwise = rank1 s (fromIntegral i)
+access :: Rank1 v => v -> Word64 -> Word64
+access s 1 = rank1 s 1
+access s n = rank1 s n - rank1 s (n - 1)
 
-rank0_ :: Rank0 v => v -> Int -> Word64
-rank0_ s i
-  | i <= 0 = 0
-  | otherwise = rank0 s (fromIntegral i)
-
-access :: Rank1 v => v -> Int -> Bool
-access s i = toEnum $ fromIntegral $ rank1_ s i - rank1_ s (i - 1)
-
--- Compute how many bits the shape index takes up
---   We use findClose on the first paren to tell us where the last meaningful paren is
-shapeBitCount :: Blob -> Int
-shapeBitCount (Blob _ s _) = case findClose s 1 of
-  Just n -> fromIntegral n
-  Nothing -> 0
-
--- Compute how many bytes the content takes up
-contentByteCount :: Blob -> Int
-contentByteCount (Blob _ _ c) = Strict.length c
-
--- Compute how many bits are non-garbage in our meta index
-metaBitCount :: Blob -> Int
-metaBitCount b = contentByteCount b + shapeBitCount b
+as :: Rank1 v => a -> a -> v -> Word64 -> a
+as l r s i = case access s i of
+  0 -> l
+  _ -> r
 
 -- Print out a string of S's and D's, corresponding to Shape or Data, from the meta index
 inspectMeta :: Blob -> String
-inspectMeta b@(Blob m _ _) = do
-  i <- [1..(metaBitCount b)]
-  case access m i of
-    True -> "S"
-    False -> "D"
+inspectMeta (Blob n m _ _) = as 'D' 'S' m <$> [1..n]
 
--- Print out the balanced parentheses representation of our shape index
+-- Print out the balanced parentheses representation of our paren index
 inspectShape :: Blob -> String
-inspectShape b@(Blob _ s _) = do
-  i <- [1..(shapeBitCount b)]
-  case access s i of
-    True  -> "("
-    False -> ")"
+inspectShape (Blob n m s _) = as ')' '(' s <$> [1..rank1 m n]
 
 -- Print out our raw content buffer
--- Can't figure out how to print strict bytestrings nicely...
 inspectContent :: Blob -> String
-inspectContent (Blob _ _ _) = undefined 
+inspectContent (Blob _ _ _ c) = show c
 
--- Print out a representation of the entire blob, interleaving shape and content
+-- Print out a representation of the entire blob, interleaving paren and content
 inspectBlob :: Blob -> String
-inspectBlob b@(Blob m s c) = do
-  i <- [1..(metaBitCount b)]
+inspectBlob (Blob n m s c) = do
+  i <- [1..n]
   case access m i of
-    True  -> case access s (fromIntegral $ rank1_ m i) of
-      True  -> "("
-      False -> ")"
-    False -> "{" ++ show (Strict.index c $ (fromIntegral $ rank0_ m i) - 1) ++ "}"
+    0 -> '{' : shows (Strict.index c $ fromIntegral $ rank0 m i - 1) "}"
+    _ -> [as ')' '(' s $ rank1 m i]
